@@ -13,13 +13,13 @@
 #include <recovery.h>
 #include <gpt.h>
 #include <io.h>
-#include <image.h>
 #include <crypto.h>
 #include <boot.h>
 #include <timing_report.h>
 #include <pb/config.h>
 
-static __no_bss __a4k struct pb_pbi pbi;
+#include <bpak/bpak.h>
+
 static char hash_buffer[PB_HASH_BUF_SZ];
 
 void pb_main(void)

@@ -10,7 +10,6 @@
 #include <pb.h>
 #include <stdio.h>
 #include <recovery.h>
-#include <image.h>
 #include <plat.h>
 #include <usb.h>
 #include <crypto.h>

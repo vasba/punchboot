@@ -10,7 +10,6 @@ all:
 			Use src/Makefile for normal builds
 tests:
 	@make -C src/tools/punchboot/src clean
-	@make -C src/tools/pbimage/src clean
 	@make -C src/tools/pbconfig/src clean
 	@make -C src/ BOARD=test LOGLEVEL=10 clean
 	@make -C src/ BOARD=test LOGLEVEL=10
@@ -55,5 +54,4 @@ dockerenv:
 clean:
 	@make -C src/ BOARD=test clean
 	@make -C src/tools/punchboot/src clean
-	@make -C src/tools/pbimage/src clean
 	@make -C src/tools/pbconfig/src clean
