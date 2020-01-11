@@ -203,7 +203,7 @@ static uint32_t recovery_flash_part(uint8_t part_no,
         return PB_ERR;
     }
 
-    if ( (lba_offset + no_of_blocks) >= gpt_get_part_last_lba(part_no))
+    if ( (lba_offset + no_of_blocks) > gpt_get_part_last_lba(part_no))
     {
         LOG_ERR("Trying to write outside of partition");
         return PB_ERR;
