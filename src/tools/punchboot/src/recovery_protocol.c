@@ -24,6 +24,7 @@
 
 #include <3pp/bearssl/bearssl_hash.h>
 #include <pb/crypto.h>
+#include <bpak/bpak.h>
 #include "recovery_protocol.h"
 #include "transport.h"
 #include "utils.h"
@@ -313,7 +314,7 @@ uint32_t pb_check_part(uint8_t part_no, int64_t offset, const char *f_name)
     int rc = PB_OK;
     char hash_data[32];
     char *buf = malloc(1024*1024);
-    
+
     if (!buf)
     {
         rc = PB_ERR;
@@ -329,7 +330,7 @@ uint32_t pb_check_part(uint8_t part_no, int64_t offset, const char *f_name)
     }
 
     br_sha256_init(&ctx);
-    
+
     size_t read_data = 0;
     size_t file_size = 0;
     do
@@ -371,6 +372,7 @@ uint32_t pb_flash_part(uint8_t part_no, int64_t offset, const char *f_name)
 
     struct pb_cmd_prep_buffer bfr_cmd;
     struct pb_cmd_write_part wr_cmd;
+    struct gpt_primary_tbl tbl;
 
     fp = fopen(f_name, "rb");
 
@@ -385,9 +387,78 @@ uint32_t pb_flash_part(uint8_t part_no, int64_t offset, const char *f_name)
     if (bfr == NULL)
     {
         printf("Could not allocate memory\n");
-        return PB_ERR;
+        err = PB_ERR;
+        goto err_close_fd_out;
     }
 
+    err = pb_get_gpt_table(&tbl);
+
+    if (err != PB_OK)
+        goto err_free_bfr_out;
+
+    /*
+     * Read first 4kBytes and figure out if it is a BPAK file
+     *
+     * if (bpak)
+     *  Write 4kByte header at the end of the partition
+     *  seek +4kByte
+     * else
+     *  seek 0
+     *
+     */
+
+    struct bpak_header *h = (struct bpak_header *) bfr;
+
+    read_sz = fread(h, 1, sizeof(*h), fp);
+
+    if ((read_sz == sizeof(*h)) && (bpak_valid_header(h) == BPAK_OK))
+    {
+        printf("Found valid BPAK header\n");
+        printf("Writing header at the end of the partition...\n");
+
+        bfr_cmd.no_of_blocks = read_sz / 512;
+        bfr_cmd.buffer_id = buffer_id;
+
+        err = pb_write(PB_CMD_PREP_BULK_BUFFER, 0, 0, 0, 0,
+                (uint8_t *) &bfr_cmd, sizeof(struct pb_cmd_prep_buffer));
+
+        if (err != PB_OK)
+            goto err_free_bfr_out;
+
+        err = pb_write_bulk(bfr, bfr_cmd.no_of_blocks*512, &sent_sz);
+
+        if (err != 0)
+        {
+            printf("Bulk xfer error, err=%i\n", err);
+            goto err_free_bfr_out;
+        }
+
+        err = pb_read_result_code();
+
+        if (err != PB_OK)
+            goto err_free_bfr_out;
+
+        wr_cmd.lba_offset = tbl.part[part_no].last_lba - read_sz/512;
+        wr_cmd.part_no = part_no;
+        wr_cmd.no_of_blocks = bfr_cmd.no_of_blocks;
+        wr_cmd.buffer_id = buffer_id;
+        buffer_id = !buffer_id;
+
+        pb_write(PB_CMD_WRITE_PART, 0, 0, 0, 0, (uint8_t *) &wr_cmd,
+                    sizeof(struct pb_cmd_write_part));
+
+        err = pb_read_result_code();
+
+        if (err != PB_OK)
+            goto err_free_bfr_out;
+    }
+    else
+    {
+        /* Not a BPAK file, write everyting */
+        fseek(fp, 0, SEEK_SET);
+    }
+
+    printf("Writing data...\n");
     wr_cmd.lba_offset = offset;
     wr_cmd.part_no = part_no;
 
@@ -402,20 +473,20 @@ uint32_t pb_flash_part(uint8_t part_no, int64_t offset, const char *f_name)
                 (uint8_t *) &bfr_cmd, sizeof(struct pb_cmd_prep_buffer));
 
         if (err != PB_OK)
-            return err;
+            goto err_free_bfr_out;
 
         err = pb_write_bulk(bfr, bfr_cmd.no_of_blocks*512, &sent_sz);
 
         if (err != 0)
         {
             printf("Bulk xfer error, err=%i\n", err);
-            goto err_xfer;
+            goto err_free_bfr_out;
         }
 
         err = pb_read_result_code();
 
         if (err != PB_OK)
-            return err;
+            goto err_free_bfr_out;
 
         wr_cmd.no_of_blocks = bfr_cmd.no_of_blocks;
         wr_cmd.buffer_id = buffer_id;
@@ -427,7 +498,7 @@ uint32_t pb_flash_part(uint8_t part_no, int64_t offset, const char *f_name)
         err = pb_read_result_code();
 
         if (err != PB_OK)
-            return err;
+            goto err_free_bfr_out;
 
         wr_cmd.lba_offset += bfr_cmd.no_of_blocks;
     }
@@ -435,8 +506,9 @@ uint32_t pb_flash_part(uint8_t part_no, int64_t offset, const char *f_name)
     pb_write(PB_CMD_WRITE_PART_FINAL, 0, 0, 0, 0, NULL, 0);
     err = pb_read_result_code();
 
-err_xfer:
+err_free_bfr_out:
     free(bfr);
+err_close_fd_out:
     fclose(fp);
     return err;
 }
